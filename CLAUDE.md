@@ -7,8 +7,8 @@ MT5 Expert Advisor，支持两个品种同时开仓（一多一空）组成配�
 ## 目录结构
 
 ```
-Experts/PairTrader.mq5      # EA 主程序（入口 + 面板 + 事件处理）
-Include/PairTradeManager.mqh # 配对管理（数据结构、交易执行、监控、持久化）
+MQL5/Experts/XAUAndGC/XAUAndGC.mq5          # EA 主程序（入口 + 面板 + 事件处理）
+MQL5/Include/XAUAndGC/PairTradeManager.mqh   # 配对管理（数据结构、交易执行、监控、持久化）
 ```
 
 ## 功能清单

@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                                  PairTrader.mq5  |
+//|                                                  XAUAndGC.mq5    |
 //|                         配对交易 EA                               |
 //|   两个品种同时开仓(一多一空)，配对盈亏监控，自动止盈止损              |
 //+------------------------------------------------------------------+
@@ -12,7 +12,7 @@
 #include <Controls\Edit.mqh>
 #include <Controls\Label.mqh>
 #include <Controls\ComboBox.mqh>
-#include "..\Include\PairTradeManager.mqh"
+#include <XAUAndGC\PairTradeManager.mqh>
 
 //+------------------------------------------------------------------+
 //| Input 参数                                                        |
