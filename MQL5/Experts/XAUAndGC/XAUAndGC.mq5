@@ -31,7 +31,7 @@ input double   InpDefaultLotsB = 0.1;      // 默认手数B
 //| 面板尺寸常量                                                       |
 //+------------------------------------------------------------------+
 #define PANEL_WIDTH    420
-#define PANEL_HEIGHT   500
+#define PANEL_HEIGHT   650
 #define ROW_HEIGHT     25
 #define LABEL_X        10
 #define INPUT_X        100
@@ -71,6 +71,10 @@ private:
    CLabel            m_lblPairInfo[10];    // 最多显示10对
    CButton           m_btnClose[10];       // 每对的平仓按钮
    CLabel            m_lblTotalProfit;
+
+   // 历史记录区域
+   CLabel            m_lblHistHeader;
+   CLabel            m_lblHistInfo[5];     // 最近5条平仓记录
 
    // 状态
    CLabel            m_lblStatus;
@@ -306,6 +310,28 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    row += 40;
 
+   // === 分隔线 - 最近平仓标题 ===
+   m_lblHistHeader.Create(m_chart_id, "lblHistHdr", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   m_lblHistHeader.Text("─── 最近平仓 ───");
+   Add(m_lblHistHeader);
+
+   row += ROW_HEIGHT + 5;
+
+   // === 最近平仓记录 (最多5条) ===
+   for(int h = 0; h < 5; h++)
+   {
+      string hIdxStr = IntegerToString(h);
+      m_lblHistInfo[h].Create(m_chart_id, "lblHist" + hIdxStr, m_subwin,
+                              LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+      m_lblHistInfo[h].Text(" ");
+      m_lblHistInfo[h].Color(clrGray);
+      Add(m_lblHistInfo[h]);
+
+      row += ROW_HEIGHT + 2;
+   }
+
+   row += 5;
+
    // === 状态栏 ===
    m_lblStatus.Create(m_chart_id, "lblStatus", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
    m_lblStatus.Text("就绪");
@@ -395,9 +421,44 @@ void CPairTraderPanel::UpdateDisplay()
       m_lblTotalProfit.Color(clrGray);
    }
 
+   // 历史记录（最近5条，倒序显示：最新的在最上面）
+   int histCount = g_manager.HistoryCount();
+   for(int h = 0; h < 5; h++)
+   {
+      // 从最新到最旧: histCount-1, histCount-2, ...
+      int histIdx = histCount - 1 - h;
+      if(histIdx >= 0)
+      {
+         PairHistory hist;
+         g_manager.GetHistory(histIdx, hist);
+
+         string dirA = (hist.dirA == ORDER_TYPE_BUY) ? "B" : "S";
+         string dirB = (hist.dirB == ORDER_TYPE_BUY) ? "B" : "S";
+         string profStr = (hist.realProfit >= 0) ? "+" + DoubleToString(hist.realProfit, 2)
+                                                  : DoubleToString(hist.realProfit, 2);
+
+         MqlDateTime dt;
+         TimeToStruct(hist.closeTime, dt);
+         string timeStr = StringFormat("%02d:%02d", dt.hour, dt.min);
+
+         string histText = "#" + IntegerToString(hist.pairId) + " "
+                         + hist.symbolA + " " + dirA + " / "
+                         + hist.symbolB + " " + dirB + "  "
+                         + hist.reason + " $" + profStr + "  " + timeStr;
+
+         m_lblHistInfo[h].Text(histText);
+         m_lblHistInfo[h].Color(hist.realProfit >= 0 ? clrGreen : clrRed);
+      }
+      else
+      {
+         m_lblHistInfo[h].Text(" ");
+         m_lblHistInfo[h].Color(clrGray);
+      }
+   }
+
    if(doLog)
    {
-      Print("[UpdateDisplay] TotalProfit=", total, " displayCount=", count);
+      Print("[UpdateDisplay] TotalProfit=", total, " displayCount=", count, " histCount=", histCount);
       // 列出面板内所有图表对象，检查有多少
       int totalObjs = ObjectsTotal(m_chart_id, m_subwin);
       Print("[UpdateDisplay] Chart objects in subwin ", m_subwin, ": ", totalObjs);

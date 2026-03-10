@@ -26,19 +26,42 @@ struct PairPosition
 };
 
 //+------------------------------------------------------------------+
+//| 平仓历史记录结构体                                                  |
+//+------------------------------------------------------------------+
+struct PairHistory
+{
+   int               pairId;
+   string            symbolA;
+   string            symbolB;
+   ENUM_ORDER_TYPE   dirA;
+   ENUM_ORDER_TYPE   dirB;
+   double            lotsA;
+   double            lotsB;
+   datetime          openTime;
+   datetime          closeTime;
+   string            reason;       // "止盈" / "止损" / "手动"
+   double            realProfit;   // 实际已实现盈亏
+};
+
+//+------------------------------------------------------------------+
 //| 配对交易管理器                                                     |
 //+------------------------------------------------------------------+
 class CPairTradeManager
 {
 private:
    PairPosition      m_pairs[];
+   PairHistory       m_history[];
+   int               m_maxHistory;
    int               m_nextPairId;
    int               m_magicNumber;
    CTrade            m_trade;
    string            m_persistFile;
+   string            m_historyFile;
 
    // 获取持仓浮盈
    double            GetPositionProfit(ulong ticket);
+   // 查询已实现盈亏（通过历史成交）
+   double            GetRealizedProfit(ulong posTicket);
    // 验证品种
    bool              ValidateSymbol(string symbol);
    // 平掉单笔持仓（同步）
@@ -66,8 +89,8 @@ public:
                               string symbolB, ENUM_ORDER_TYPE dirB, double lotsB,
                               string &errorMsg);
 
-   // 平仓：平掉指定配对
-   bool              ClosePair(int pairId, string &errorMsg);
+   // 平仓：平掉指定配对（reason: "止盈"/"止损"/"手动"）
+   bool              ClosePair(int pairId, string &errorMsg, string reason = "手动");
 
    // 全部平仓
    void              CloseAllPairs();
@@ -93,6 +116,12 @@ public:
 
    // 验证持仓是否仍存在（EA重启后清理无效配对）
    void              ValidatePairs();
+
+   // 历史记录
+   int               HistoryCount()  { return ArraySize(m_history); }
+   bool              GetHistory(int index, PairHistory &hist);
+   void              SaveHistoryToFile();
+   void              LoadHistoryFromFile();
 };
 
 //+------------------------------------------------------------------+
@@ -102,7 +131,9 @@ CPairTradeManager::CPairTradeManager()
 {
    m_nextPairId = 1;
    m_magicNumber = 0;
+   m_maxHistory = 50;
    m_persistFile = "PairTrader_data.csv";
+   m_historyFile = "PairTrader_history.csv";
 }
 
 //+------------------------------------------------------------------+
@@ -120,6 +151,7 @@ void CPairTradeManager::Init(int magicNumber)
    m_magicNumber = magicNumber;
    m_trade.SetExpertMagicNumber(magicNumber);
    LoadFromFile();
+   LoadHistoryFromFile();
    ValidatePairs();
 }
 
@@ -221,6 +253,33 @@ double CPairTradeManager::GetPositionProfit(ulong ticket)
    double profit = PositionGetDouble(POSITION_PROFIT);
    double swap = PositionGetDouble(POSITION_SWAP);
    return profit + swap;
+}
+
+//+------------------------------------------------------------------+
+//| 查询某持仓的已实现盈亏（从历史成交中获取）                              |
+//+------------------------------------------------------------------+
+double CPairTradeManager::GetRealizedProfit(ulong posTicket)
+{
+   if(!HistorySelectByPosition(posTicket))
+      return 0.0;
+
+   double total = 0.0;
+   int deals = HistoryDealsTotal();
+   for(int i = 0; i < deals; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT)
+      {
+         total += HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION)
+                + HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+      }
+   }
+   return total;
 }
 
 //+------------------------------------------------------------------+
@@ -457,12 +516,15 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
 //+------------------------------------------------------------------+
 //| 平仓：平掉指定配对                                                 |
 //+------------------------------------------------------------------+
-bool CPairTradeManager::ClosePair(int pairId, string &errorMsg)
+bool CPairTradeManager::ClosePair(int pairId, string &errorMsg, string reason)
 {
    for(int i = 0; i < ArraySize(m_pairs); i++)
    {
       if(m_pairs[i].pairId == pairId)
       {
+         // 保存配对信息（平仓后会从数组移除）
+         PairPosition closingPair = m_pairs[i];
+
          // 异步并行发送两笔平仓请求，最大限度减少腿间暴露时间
          ulong reqA = ClosePositionAsync(m_pairs[i].ticketA);
          ulong reqB = ClosePositionAsync(m_pairs[i].ticketB);
@@ -496,12 +558,47 @@ bool CPairTradeManager::ClosePair(int pairId, string &errorMsg)
             return false;
          }
 
+         // 查询实际已实现盈亏并记录历史
+         double realA = GetRealizedProfit(closingPair.ticketA);
+         double realB = GetRealizedProfit(closingPair.ticketB);
+         double realTotal = realA + realB;
+
+         PairHistory hist;
+         hist.pairId     = closingPair.pairId;
+         hist.symbolA    = closingPair.symbolA;
+         hist.symbolB    = closingPair.symbolB;
+         hist.dirA       = closingPair.dirA;
+         hist.dirB       = closingPair.dirB;
+         hist.lotsA      = closingPair.lotsA;
+         hist.lotsB      = closingPair.lotsB;
+         hist.openTime   = closingPair.openTime;
+         hist.closeTime  = TimeCurrent();
+         hist.reason     = reason;
+         hist.realProfit = realTotal;
+
+         int hSize = ArraySize(m_history);
+         ArrayResize(m_history, hSize + 1);
+         m_history[hSize] = hist;
+
+         // 超出上限时移除最早的记录
+         if(ArraySize(m_history) > m_maxHistory)
+         {
+            for(int k = 0; k < ArraySize(m_history) - 1; k++)
+               m_history[k] = m_history[k + 1];
+            ArrayResize(m_history, ArraySize(m_history) - 1);
+         }
+
+         Print("配对 ", closingPair.pairId, " 平仓完成 [", reason, "] 实际盈亏: $",
+               DoubleToString(realTotal, 2), " (A=$", DoubleToString(realA, 2),
+               " B=$", DoubleToString(realB, 2), ")");
+
          // 从数组中移除
          for(int j = i; j < ArraySize(m_pairs) - 1; j++)
             m_pairs[j] = m_pairs[j + 1];
          ArrayResize(m_pairs, ArraySize(m_pairs) - 1);
 
          SaveToFile();
+         SaveHistoryToFile();
          return true;
       }
    }
@@ -568,7 +665,7 @@ int CPairTradeManager::MonitorPairs(double takeProfit, double stopLoss, double t
          Print("配对 ", m_pairs[i].pairId, " 触发止盈: ", DoubleToString(pairProfit, 2),
                " >= ", DoubleToString(effectiveTP, 2), " (TP=", DoubleToString(takeProfit, 2),
                " buffer=", DoubleToString(tpBuffer, 2), ")");
-         if(ClosePair(m_pairs[i].pairId, errorMsg))
+         if(ClosePair(m_pairs[i].pairId, errorMsg, "止盈"))
             closedCount++;
          else
             Print("止盈平仓失败: ", errorMsg);
@@ -576,7 +673,7 @@ int CPairTradeManager::MonitorPairs(double takeProfit, double stopLoss, double t
       else if(pairProfit <= -stopLoss)
       {
          Print("配对 ", m_pairs[i].pairId, " 触发止损: ", DoubleToString(pairProfit, 2), " <= -", DoubleToString(stopLoss, 2));
-         if(ClosePair(m_pairs[i].pairId, errorMsg))
+         if(ClosePair(m_pairs[i].pairId, errorMsg, "止损"))
             closedCount++;
          else
             Print("止损平仓失败: ", errorMsg);
@@ -711,4 +808,92 @@ void CPairTradeManager::ValidatePairs()
    }
 
    SaveToFile();
+}
+
+//+------------------------------------------------------------------+
+//| 获取历史记录                                                       |
+//+------------------------------------------------------------------+
+bool CPairTradeManager::GetHistory(int index, PairHistory &hist)
+{
+   if(index < 0 || index >= ArraySize(m_history))
+      return false;
+
+   hist = m_history[index];
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| 保存历史记录到文件                                                  |
+//+------------------------------------------------------------------+
+void CPairTradeManager::SaveHistoryToFile()
+{
+   int handle = FileOpen(m_historyFile, FILE_WRITE | FILE_CSV | FILE_ANSI, ',');
+   if(handle == INVALID_HANDLE)
+   {
+      Print("历史记录保存失败: ", GetLastError());
+      return;
+   }
+
+   for(int i = 0; i < ArraySize(m_history); i++)
+   {
+      FileWrite(handle,
+                IntegerToString(m_history[i].pairId),
+                m_history[i].symbolA,
+                m_history[i].symbolB,
+                IntegerToString(m_history[i].dirA),
+                IntegerToString(m_history[i].dirB),
+                DoubleToString(m_history[i].lotsA, 2),
+                DoubleToString(m_history[i].lotsB, 2),
+                IntegerToString(m_history[i].openTime),
+                IntegerToString(m_history[i].closeTime),
+                m_history[i].reason,
+                DoubleToString(m_history[i].realProfit, 2));
+   }
+
+   FileClose(handle);
+}
+
+//+------------------------------------------------------------------+
+//| 从文件加载历史记录                                                  |
+//+------------------------------------------------------------------+
+void CPairTradeManager::LoadHistoryFromFile()
+{
+   if(!FileIsExist(m_historyFile))
+      return;
+
+   int handle = FileOpen(m_historyFile, FILE_READ | FILE_CSV | FILE_ANSI, ',');
+   if(handle == INVALID_HANDLE)
+   {
+      Print("历史记录加载失败: ", GetLastError());
+      return;
+   }
+
+   ArrayResize(m_history, 0);
+
+   while(!FileIsEnding(handle))
+   {
+      string pidStr = FileReadString(handle);
+      if(pidStr == "")
+         break;
+
+      PairHistory hist;
+      hist.pairId     = (int)StringToInteger(pidStr);
+      hist.symbolA    = FileReadString(handle);
+      hist.symbolB    = FileReadString(handle);
+      hist.dirA       = (ENUM_ORDER_TYPE)StringToInteger(FileReadString(handle));
+      hist.dirB       = (ENUM_ORDER_TYPE)StringToInteger(FileReadString(handle));
+      hist.lotsA      = StringToDouble(FileReadString(handle));
+      hist.lotsB      = StringToDouble(FileReadString(handle));
+      hist.openTime   = (datetime)StringToInteger(FileReadString(handle));
+      hist.closeTime  = (datetime)StringToInteger(FileReadString(handle));
+      hist.reason     = FileReadString(handle);
+      hist.realProfit = StringToDouble(FileReadString(handle));
+
+      int size = ArraySize(m_history);
+      ArrayResize(m_history, size + 1);
+      m_history[size] = hist;
+   }
+
+   FileClose(handle);
+   Print("从文件恢复 ", ArraySize(m_history), " 条历史记录");
 }
