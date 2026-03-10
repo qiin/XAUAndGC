@@ -124,7 +124,7 @@ string CPairTradeManager::PairComment(int pairId)
 }
 
 //+------------------------------------------------------------------+
-//| 验证品种是否可用                                                   |
+//| 验证品种是否可用（含等待报价就绪）                                    |
 //+------------------------------------------------------------------+
 bool CPairTradeManager::ValidateSymbol(string symbol)
 {
@@ -136,7 +136,18 @@ bool CPairTradeManager::ValidateSymbol(string symbol)
    if(SymbolInfoInteger(symbol, SYMBOL_EXIST) == 0)
       return false;
 
-   return true;
+   // 等待报价数据就绪（最多等3秒）
+   for(int i = 0; i < 30; i++)
+   {
+      double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      if(bid > 0 && ask > 0)
+         return true;
+      Sleep(100);
+   }
+
+   Print("警告: 品种 ", symbol, " 报价未就绪 (bid/ask=0)");
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -208,47 +219,46 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
    int pairId = m_nextPairId;
    string comment = PairComment(pairId);
 
-   // 获取价格并发送订单A
-   double priceA = (dirA == ORDER_TYPE_BUY)
-                   ? SymbolInfoDouble(symbolA, SYMBOL_ASK)
-                   : SymbolInfoDouble(symbolA, SYMBOL_BID);
-
    m_trade.SetExpertMagicNumber(m_magicNumber);
+
+   // === 发送订单A ===
+   Print("开仓A: ", symbolA, " ", (dirA == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", lotsA);
    bool resultA = false;
    if(dirA == ORDER_TYPE_BUY)
-      resultA = m_trade.Buy(lotsA, symbolA, priceA, 0, 0, comment);
+      resultA = m_trade.Buy(lotsA, symbolA, 0, 0, 0, comment);
    else
-      resultA = m_trade.Sell(lotsA, symbolA, priceA, 0, 0, comment);
+      resultA = m_trade.Sell(lotsA, symbolA, 0, 0, 0, comment);
 
-   if(!resultA || m_trade.ResultRetcode() != TRADE_RETCODE_DONE)
+   uint retcodeA = m_trade.ResultRetcode();
+   if(!resultA || retcodeA != TRADE_RETCODE_DONE)
    {
-      errorMsg = "品种A下单失败: " + IntegerToString(m_trade.ResultRetcode()) + " " + m_trade.ResultRetcodeDescription();
+      errorMsg = symbolA + " 下单失败: [" + IntegerToString(retcodeA) + "] " + m_trade.ResultRetcodeDescription();
+      Print("订单A失败: ", errorMsg);
       return false;
    }
 
    ulong ticketA = m_trade.ResultOrder();
+   Print("订单A成功: ticket=", ticketA);
 
    // 等待持仓出现
-   Sleep(100);
+   Sleep(200);
 
-   // 发送订单B
-   double priceB = (dirB == ORDER_TYPE_BUY)
-                   ? SymbolInfoDouble(symbolB, SYMBOL_ASK)
-                   : SymbolInfoDouble(symbolB, SYMBOL_BID);
-
+   // === 发送订单B ===
+   Print("开仓B: ", symbolB, " ", (dirB == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", lotsB);
    bool resultB = false;
    if(dirB == ORDER_TYPE_BUY)
-      resultB = m_trade.Buy(lotsB, symbolB, priceB, 0, 0, comment);
+      resultB = m_trade.Buy(lotsB, symbolB, 0, 0, 0, comment);
    else
-      resultB = m_trade.Sell(lotsB, symbolB, priceB, 0, 0, comment);
+      resultB = m_trade.Sell(lotsB, symbolB, 0, 0, 0, comment);
 
-   if(!resultB || m_trade.ResultRetcode() != TRADE_RETCODE_DONE)
+   uint retcodeB = m_trade.ResultRetcode();
+   if(!resultB || retcodeB != TRADE_RETCODE_DONE)
    {
       // 订单B失败，回滚订单A
-      errorMsg = "品种B下单失败: " + IntegerToString(m_trade.ResultRetcode()) + " " + m_trade.ResultRetcodeDescription();
-      errorMsg += " (正在回滚品种A...)";
+      errorMsg = symbolB + " 下单失败: [" + IntegerToString(retcodeB) + "] " + m_trade.ResultRetcodeDescription();
+      Print("订单B失败: ", errorMsg, " -> 回滚订单A");
 
-      // 尝试回滚：需要等待ticketA对应的持仓出现
+      Sleep(200);
       if(PositionSelectByTicket(ticketA))
          m_trade.PositionClose(ticketA);
 
@@ -256,6 +266,7 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
    }
 
    ulong ticketB = m_trade.ResultOrder();
+   Print("订单B成功: ticket=", ticketB);
 
    // 创建配对记录
    PairPosition pair;
