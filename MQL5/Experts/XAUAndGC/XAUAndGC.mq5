@@ -264,21 +264,27 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    // === 持仓对信息 (最多10对) ===
    m_displayCount = 0;
+   Print("[CreatePanel] Pair controls start at row=", row, " chart_id=", m_chart_id, " subwin=", m_subwin);
    for(int i = 0; i < 10; i++)
    {
       string idxStr = IntegerToString(i);
 
-      m_lblPairInfo[i].Create(m_chart_id, "lblPair" + idxStr, m_subwin,
+      bool lblOk = m_lblPairInfo[i].Create(m_chart_id, "lblPair" + idxStr, m_subwin,
                               LABEL_X, row, PANEL_WIDTH - 80, row + ROW_HEIGHT);
       m_lblPairInfo[i].Text(" ");
       Add(m_lblPairInfo[i]);
 
-      m_btnClose[i].Create(m_chart_id, "btnClose" + idxStr, m_subwin,
+      bool btnOk = m_btnClose[i].Create(m_chart_id, "btnClose" + idxStr, m_subwin,
                            PANEL_WIDTH - 75, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
       m_btnClose[i].Text(" ");
       m_btnClose[i].ColorBackground(clrNONE);
       m_btnClose[i].Color(clrNONE);
       Add(m_btnClose[i]);
+
+      if(i == 0)
+         Print("[CreatePanel] Pair[0] lblOk=", lblOk, " btnOk=", btnOk,
+               " lblName=", m_lblPairInfo[i].Name(), " btnName=", m_btnClose[i].Name(),
+               " row=", row);
 
       row += ROW_HEIGHT + 2;
    }
@@ -315,6 +321,15 @@ void CPairTraderPanel::UpdateDisplay()
 {
    int count = g_manager.PairCount();
 
+   // DEBUG: 每10秒输出一次日志，避免刷屏
+   static datetime lastLog = 0;
+   bool doLog = (TimeCurrent() - lastLog >= 10);
+   if(doLog)
+   {
+      lastLog = TimeCurrent();
+      Print("[UpdateDisplay] PairCount=", count, " m_chart_id=", m_chart_id, " m_subwin=", m_subwin);
+   }
+
    for(int i = 0; i < 10; i++)
    {
       if(i < count)
@@ -332,6 +347,22 @@ void CPairTraderPanel::UpdateDisplay()
                      + " / "
                      + pair.symbolB + " " + dirStrB + " " + DoubleToString(pair.lotsB, 2)
                      + "  $" + profitStr;
+
+         if(doLog)
+         {
+            Print("[UpdateDisplay] Pair[", i, "] info=", info);
+            // 检查控件对象名称和位置
+            long lblX = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_XDISTANCE);
+            long lblY = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_YDISTANCE);
+            long lblVis = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_TIMEFRAMES);
+            Print("[UpdateDisplay] Label name=", m_lblPairInfo[i].Name(),
+                  " x=", lblX, " y=", lblY, " visible_flags=", lblVis);
+            long btnX = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_XDISTANCE);
+            long btnY = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_YDISTANCE);
+            long btnVis = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_TIMEFRAMES);
+            Print("[UpdateDisplay] Button name=", m_btnClose[i].Name(),
+                  " x=", btnX, " y=", btnY, " visible_flags=", btnVis);
+         }
 
          m_lblPairInfo[i].Text(info);
          m_lblPairInfo[i].Color(profit >= 0 ? clrGreen : clrRed);
@@ -363,6 +394,14 @@ void CPairTraderPanel::UpdateDisplay()
       m_lblTotalProfit.Color(clrGray);
    }
 
+   if(doLog)
+   {
+      Print("[UpdateDisplay] TotalProfit=", total, " displayCount=", count);
+      // 列出面板内所有图表对象，检查有多少
+      int totalObjs = ObjectsTotal(m_chart_id, m_subwin);
+      Print("[UpdateDisplay] Chart objects in subwin ", m_subwin, ": ", totalObjs);
+   }
+
    m_displayCount = count;
    ChartRedraw();
 }
@@ -391,6 +430,8 @@ int OnInit()
    }
 
    g_panel.Run();
+
+   Print("[OnInit] Panel created. PairCount after Init=", g_manager.PairCount());
    g_panel.UpdateDisplay();
 
    // 启动定时器
