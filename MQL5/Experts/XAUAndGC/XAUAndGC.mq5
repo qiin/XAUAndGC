@@ -19,8 +19,9 @@
 //+------------------------------------------------------------------+
 input double   InpTakeProfit    = 500.0;   // 止盈金额(USD)
 input double   InpStopLoss     = 300.0;   // 止损金额(USD)
+input double   InpTPBuffer     = 5.0;     // 止盈提前触发量(USD)
 input int      InpMagicNumber  = 20240101; // Magic Number
-input int      InpTimerSec     = 1;        // 监控间隔(秒)
+input int      InpTimerMs      = 500;      // 监控间隔(毫秒)
 input string   InpDefaultSymA  = "XAUUSD"; // 默认品种A
 input string   InpDefaultSymB  = "GC";     // 默认品种B
 input double   InpDefaultLotsA = 0.1;      // 默认手数A
@@ -434,10 +435,10 @@ int OnInit()
    Print("[OnInit] Panel created. PairCount after Init=", g_manager.PairCount());
    g_panel.UpdateDisplay();
 
-   // 启动定时器
-   EventSetTimer(InpTimerSec);
+   // 启动毫秒级定时器
+   EventSetMillisecondTimer(InpTimerMs);
 
-   Print("PairTrader EA 初始化完成. TP=", InpTakeProfit, " SL=", InpStopLoss);
+   Print("PairTrader EA 初始化完成. TP=", InpTakeProfit, " SL=", InpStopLoss, " Timer=", InpTimerMs, "ms");
    return INIT_SUCCEEDED;
 }
 
@@ -457,7 +458,7 @@ void OnDeinit(const int reason)
 void OnTimer()
 {
    // 监控盈亏，自动平仓
-   int closed = g_manager.MonitorPairs(InpTakeProfit, InpStopLoss);
+   int closed = g_manager.MonitorPairs(InpTakeProfit, InpStopLoss, InpTPBuffer);
 
    if(closed > 0)
       g_panel.SetStatus(IntegerToString(closed) + " 对触发自动平仓");

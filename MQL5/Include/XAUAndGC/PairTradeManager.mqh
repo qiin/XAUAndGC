@@ -41,8 +41,12 @@ private:
    double            GetPositionProfit(ulong ticket);
    // 验证品种
    bool              ValidateSymbol(string symbol);
-   // 平掉单笔持仓
+   // 平掉单笔持仓（同步）
    bool              ClosePosition(ulong ticket);
+   // 异步发送平仓请求，返回request_id（0=失败或已不存在）
+   ulong             ClosePositionAsync(ulong ticket);
+   // 等待异步平仓完成
+   bool              WaitAsyncClose(ulong ticket, int timeoutMs = 3000);
    // 生成 Comment 标记
    string            PairComment(int pairId);
    // 设置品种对应的成交模式
@@ -75,7 +79,7 @@ public:
    double            GetTotalProfit();
 
    // 盈亏监控：检查所有配对，返回被平仓的配对数
-   int               MonitorPairs(double takeProfit, double stopLoss);
+   int               MonitorPairs(double takeProfit, double stopLoss, double tpBuffer = 0.0);
 
    // 配对数量
    int               PairCount() { return ArraySize(m_pairs); }
@@ -233,6 +237,85 @@ bool CPairTradeManager::ClosePosition(ulong ticket)
 }
 
 //+------------------------------------------------------------------+
+//| 异步发送平仓请求                                                   |
+//+------------------------------------------------------------------+
+ulong CPairTradeManager::ClosePositionAsync(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket))
+      return 0; // 已不存在，返回0表示无需等待
+
+   string sym = PositionGetString(POSITION_SYMBOL);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+   SetFillType(sym);
+
+   MqlTradeRequest request = {};
+   MqlTradeResult  result  = {};
+
+   request.action    = TRADE_ACTION_DEAL;
+   request.position  = ticket;
+   request.symbol    = sym;
+   request.volume    = volume;
+   request.magic     = m_magicNumber;
+   request.deviation = 20;
+
+   // 平仓方向与持仓方向相反
+   if(posType == POSITION_TYPE_BUY)
+   {
+      request.type  = ORDER_TYPE_SELL;
+      request.price = SymbolInfoDouble(sym, SYMBOL_BID);
+   }
+   else
+   {
+      request.type  = ORDER_TYPE_BUY;
+      request.price = SymbolInfoDouble(sym, SYMBOL_ASK);
+   }
+
+   // 使用与CTrade一致的成交模式
+   long fillMode = SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+   if((fillMode & SYMBOL_FILLING_FOK) != 0)
+      request.type_filling = ORDER_FILLING_FOK;
+   else if((fillMode & SYMBOL_FILLING_IOC) != 0)
+      request.type_filling = ORDER_FILLING_IOC;
+   else
+      request.type_filling = ORDER_FILLING_RETURN;
+
+   if(!OrderSendAsync(request, result))
+   {
+      Print("异步平仓发送失败: ticket=", ticket, " error=", GetLastError());
+      return 0;
+   }
+
+   if(result.retcode != TRADE_RETCODE_PLACED)
+   {
+      Print("异步平仓被拒: ticket=", ticket, " retcode=", result.retcode);
+      return 0;
+   }
+
+   Print("异步平仓已发送: ticket=", ticket, " request_id=", result.request_id);
+   return result.request_id;
+}
+
+//+------------------------------------------------------------------+
+//| 等待异步平仓完成（检查持仓是否消失）                                   |
+//+------------------------------------------------------------------+
+bool CPairTradeManager::WaitAsyncClose(ulong ticket, int timeoutMs)
+{
+   int waited = 0;
+   int step = 50; // 50ms检查一次
+   while(waited < timeoutMs)
+   {
+      if(!PositionSelectByTicket(ticket))
+         return true; // 持仓已消失，平仓成功
+      Sleep(step);
+      waited += step;
+   }
+   Print("等待异步平仓超时: ticket=", ticket);
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| 开仓：创建一对持仓                                                 |
 //+------------------------------------------------------------------+
 bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lotsA,
@@ -380,8 +463,30 @@ bool CPairTradeManager::ClosePair(int pairId, string &errorMsg)
    {
       if(m_pairs[i].pairId == pairId)
       {
-         bool closeA = ClosePosition(m_pairs[i].ticketA);
-         bool closeB = ClosePosition(m_pairs[i].ticketB);
+         // 异步并行发送两笔平仓请求，最大限度减少腿间暴露时间
+         ulong reqA = ClosePositionAsync(m_pairs[i].ticketA);
+         ulong reqB = ClosePositionAsync(m_pairs[i].ticketB);
+
+         // 等待两笔都完成
+         bool closeA = (reqA == 0) ? !PositionSelectByTicket(m_pairs[i].ticketA)
+                                   : WaitAsyncClose(m_pairs[i].ticketA);
+         bool closeB = (reqB == 0) ? !PositionSelectByTicket(m_pairs[i].ticketB)
+                                   : WaitAsyncClose(m_pairs[i].ticketB);
+
+         if(!closeA || !closeB)
+         {
+            // 异步失败时回退到同步重试
+            if(!closeA)
+            {
+               Print("异步平仓A失败，同步重试: ticket=", m_pairs[i].ticketA);
+               closeA = ClosePosition(m_pairs[i].ticketA);
+            }
+            if(!closeB)
+            {
+               Print("异步平仓B失败，同步重试: ticket=", m_pairs[i].ticketB);
+               closeB = ClosePosition(m_pairs[i].ticketB);
+            }
+         }
 
          if(!closeA || !closeB)
          {
@@ -445,18 +550,24 @@ double CPairTradeManager::GetTotalProfit()
 //+------------------------------------------------------------------+
 //| 盈亏监控                                                          |
 //+------------------------------------------------------------------+
-int CPairTradeManager::MonitorPairs(double takeProfit, double stopLoss)
+int CPairTradeManager::MonitorPairs(double takeProfit, double stopLoss, double tpBuffer)
 {
    int closedCount = 0;
    string errorMsg;
+
+   // 实际触发阈值 = 止盈 - 提前量，给滑点留余量
+   double effectiveTP = takeProfit - tpBuffer;
+   if(effectiveTP < 0) effectiveTP = 0;
 
    for(int i = ArraySize(m_pairs) - 1; i >= 0; i--)
    {
       double pairProfit = GetPairProfit(i);
 
-      if(pairProfit >= takeProfit)
+      if(pairProfit >= effectiveTP)
       {
-         Print("配对 ", m_pairs[i].pairId, " 触发止盈: ", DoubleToString(pairProfit, 2), " >= ", DoubleToString(takeProfit, 2));
+         Print("配对 ", m_pairs[i].pairId, " 触发止盈: ", DoubleToString(pairProfit, 2),
+               " >= ", DoubleToString(effectiveTP, 2), " (TP=", DoubleToString(takeProfit, 2),
+               " buffer=", DoubleToString(tpBuffer, 2), ")");
          if(ClosePair(m_pairs[i].pairId, errorMsg))
             closedCount++;
          else
