@@ -47,6 +47,8 @@ private:
    string            PairComment(int pairId);
    // 设置品种对应的成交模式
    void              SetFillType(string symbol);
+   // 等待订单成交并返回持仓ticket
+   ulong             WaitForPosition(string symbol, ulong orderTicket, string comment);
 
 public:
                      CPairTradeManager();
@@ -145,6 +147,39 @@ void CPairTradeManager::SetFillType(string symbol)
 }
 
 //+------------------------------------------------------------------+
+//| 等待订单成交，返回持仓ticket（0=超时失败）                             |
+//+------------------------------------------------------------------+
+ulong CPairTradeManager::WaitForPosition(string symbol, ulong orderTicket, string comment)
+{
+   // 最多等5秒
+   for(int i = 0; i < 50; i++)
+   {
+      // 遍历所有持仓查找匹配的
+      int total = PositionsTotal();
+      for(int j = 0; j < total; j++)
+      {
+         ulong posTicket = PositionGetTicket(j);
+         if(posTicket == 0)
+            continue;
+
+         string posSym = PositionGetString(POSITION_SYMBOL);
+         string posComment = PositionGetString(POSITION_COMMENT);
+
+         // 通过 comment 匹配（最可靠的方式）
+         if(posSym == symbol && posComment == comment)
+         {
+            Print("找到持仓: symbol=", posSym, " ticket=", posTicket, " comment=", posComment);
+            return posTicket;
+         }
+      }
+      Sleep(100);
+   }
+
+   Print("等待持仓超时: symbol=", symbol, " order=", orderTicket);
+   return 0;
+}
+
+//+------------------------------------------------------------------+
 //| 验证品种是否可用（含等待报价就绪）                                    |
 //+------------------------------------------------------------------+
 bool CPairTradeManager::ValidateSymbol(string symbol)
@@ -192,6 +227,8 @@ bool CPairTradeManager::ClosePosition(ulong ticket)
    if(!PositionSelectByTicket(ticket))
       return true; // 持仓已不存在，视为成功
 
+   string sym = PositionGetString(POSITION_SYMBOL);
+   SetFillType(sym);
    return m_trade.PositionClose(ticket);
 }
 
@@ -252,7 +289,8 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
       resultA = m_trade.Sell(lotsA, symbolA, 0, 0, 0, comment);
 
    uint retcodeA = m_trade.ResultRetcode();
-   if(!resultA || retcodeA != TRADE_RETCODE_DONE)
+   Print("订单A返回码: ", retcodeA, " ", m_trade.ResultRetcodeDescription());
+   if(!resultA || (retcodeA != TRADE_RETCODE_DONE && retcodeA != TRADE_RETCODE_PLACED))
    {
       errorMsg = symbolA + " 下单失败: [" + IntegerToString(retcodeA) + "] " + m_trade.ResultRetcodeDescription();
       Print("订单A失败: ", errorMsg);
@@ -260,10 +298,16 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
    }
 
    ulong ticketA = m_trade.ResultOrder();
-   Print("订单A成功: ticket=", ticketA);
 
-   // 等待持仓出现
-   Sleep(200);
+   // 等待订单成交、持仓出现
+   ulong posTicketA = WaitForPosition(symbolA, ticketA, comment);
+   if(posTicketA == 0)
+   {
+      errorMsg = symbolA + " 等待持仓超时";
+      Print("订单A: ", errorMsg);
+      return false;
+   }
+   Print("订单A成功: order=", ticketA, " position=", posTicketA);
 
    // === 发送订单B ===
    SetFillType(symbolB);
@@ -275,29 +319,42 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
       resultB = m_trade.Sell(lotsB, symbolB, 0, 0, 0, comment);
 
    uint retcodeB = m_trade.ResultRetcode();
-   if(!resultB || retcodeB != TRADE_RETCODE_DONE)
+   Print("订单B返回码: ", retcodeB, " ", m_trade.ResultRetcodeDescription());
+   if(!resultB || (retcodeB != TRADE_RETCODE_DONE && retcodeB != TRADE_RETCODE_PLACED))
    {
       // 订单B失败，回滚订单A
       errorMsg = symbolB + " 下单失败: [" + IntegerToString(retcodeB) + "] " + m_trade.ResultRetcodeDescription();
       Print("订单B失败: ", errorMsg, " -> 回滚订单A");
 
-      Sleep(200);
-      if(PositionSelectByTicket(ticketA))
-         m_trade.PositionClose(ticketA);
+      SetFillType(symbolA);
+      if(PositionSelectByTicket(posTicketA))
+         m_trade.PositionClose(posTicketA);
 
       return false;
    }
 
    ulong ticketB = m_trade.ResultOrder();
-   Print("订单B成功: ticket=", ticketB);
+   ulong posTicketB = WaitForPosition(symbolB, ticketB, comment);
+   if(posTicketB == 0)
+   {
+      errorMsg = symbolB + " 等待持仓超时";
+      Print("订单B: ", errorMsg, " -> 回滚订单A");
+
+      SetFillType(symbolA);
+      if(PositionSelectByTicket(posTicketA))
+         m_trade.PositionClose(posTicketA);
+
+      return false;
+   }
+   Print("订单B成功: order=", ticketB, " position=", posTicketB);
 
    // 创建配对记录
    PairPosition pair;
    pair.pairId   = pairId;
    pair.symbolA  = symbolA;
    pair.symbolB  = symbolB;
-   pair.ticketA  = ticketA;
-   pair.ticketB  = ticketB;
+   pair.ticketA  = posTicketA;
+   pair.ticketB  = posTicketB;
    pair.dirA     = dirA;
    pair.dirB     = dirB;
    pair.lotsA    = lotsA;
