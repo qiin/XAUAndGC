@@ -45,6 +45,8 @@ private:
    bool              ClosePosition(ulong ticket);
    // 生成 Comment 标记
    string            PairComment(int pairId);
+   // 设置品种对应的成交模式
+   void              SetFillType(string symbol);
 
 public:
                      CPairTradeManager();
@@ -121,6 +123,25 @@ void CPairTradeManager::Init(int magicNumber)
 string CPairTradeManager::PairComment(int pairId)
 {
    return "PAIR_" + IntegerToString(pairId);
+}
+
+//+------------------------------------------------------------------+
+//| 根据品种支持的模式设置成交类型                                        |
+//+------------------------------------------------------------------+
+void CPairTradeManager::SetFillType(string symbol)
+{
+   long fillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+
+   if((fillMode & SYMBOL_FILLING_FOK) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((fillMode & SYMBOL_FILLING_IOC) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else
+      m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
+
+   Print("品种 ", symbol, " 成交模式: ", fillMode, " -> 使用: ",
+         ((fillMode & SYMBOL_FILLING_FOK) != 0) ? "FOK" :
+         ((fillMode & SYMBOL_FILLING_IOC) != 0) ? "IOC" : "RETURN");
 }
 
 //+------------------------------------------------------------------+
@@ -222,6 +243,7 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
    m_trade.SetExpertMagicNumber(m_magicNumber);
 
    // === 发送订单A ===
+   SetFillType(symbolA);
    Print("开仓A: ", symbolA, " ", (dirA == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", lotsA);
    bool resultA = false;
    if(dirA == ORDER_TYPE_BUY)
@@ -244,6 +266,7 @@ bool CPairTradeManager::OpenPair(string symbolA, ENUM_ORDER_TYPE dirA, double lo
    Sleep(200);
 
    // === 发送订单B ===
+   SetFillType(symbolB);
    Print("开仓B: ", symbolB, " ", (dirB == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", lotsB);
    bool resultB = false;
    if(dirB == ORDER_TYPE_BUY)
