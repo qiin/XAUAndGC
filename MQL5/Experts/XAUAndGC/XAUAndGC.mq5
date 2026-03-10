@@ -270,19 +270,15 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
       m_lblPairInfo[i].Create(m_chart_id, "lblPair" + idxStr, m_subwin,
                               LABEL_X, row, PANEL_WIDTH - 80, row + ROW_HEIGHT);
-      m_lblPairInfo[i].Text("");
+      m_lblPairInfo[i].Text(" ");
       Add(m_lblPairInfo[i]);
 
       m_btnClose[i].Create(m_chart_id, "btnClose" + idxStr, m_subwin,
                            PANEL_WIDTH - 75, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
-      m_btnClose[i].Text("平仓");
-      m_btnClose[i].ColorBackground(clrTomato);
-      m_btnClose[i].Color(clrWhite);
+      m_btnClose[i].Text(" ");
+      m_btnClose[i].ColorBackground(clrNONE);
+      m_btnClose[i].Color(clrNONE);
       Add(m_btnClose[i]);
-
-      // 默认隐藏
-      m_lblPairInfo[i].Hide();
-      m_btnClose[i].Hide();
 
       row += ROW_HEIGHT + 2;
    }
@@ -327,39 +323,48 @@ void CPairTraderPanel::UpdateDisplay()
          g_manager.GetPair(i, pair);
          double profit = g_manager.GetPairProfit(i);
 
-         string dirStrA = (pair.dirA == ORDER_TYPE_BUY) ? "↑" : "↓";
-         string dirStrB = (pair.dirB == ORDER_TYPE_BUY) ? "↑" : "↓";
-         string profitStr = (profit >= 0) ? "+$" + DoubleToString(profit, 2) : "-$" + DoubleToString(MathAbs(profit), 2);
+         string dirStrA = (pair.dirA == ORDER_TYPE_BUY) ? "B" : "S";
+         string dirStrB = (pair.dirB == ORDER_TYPE_BUY) ? "B" : "S";
+         string profitStr = (profit >= 0) ? "+" + DoubleToString(profit, 2) : DoubleToString(profit, 2);
 
          string info = "#" + IntegerToString(pair.pairId) + " "
-                     + pair.symbolA + dirStrA + " " + DoubleToString(pair.lotsA, 2)
+                     + pair.symbolA + " " + dirStrA + " " + DoubleToString(pair.lotsA, 2)
                      + " / "
-                     + pair.symbolB + dirStrB + " " + DoubleToString(pair.lotsB, 2)
-                     + "  " + profitStr;
+                     + pair.symbolB + " " + dirStrB + " " + DoubleToString(pair.lotsB, 2)
+                     + "  $" + profitStr;
 
          m_lblPairInfo[i].Text(info);
          m_lblPairInfo[i].Color(profit >= 0 ? clrGreen : clrRed);
-         m_lblPairInfo[i].Show();
-         m_btnClose[i].Show();
+
+         m_btnClose[i].Text("平仓");
+         m_btnClose[i].ColorBackground(clrTomato);
+         m_btnClose[i].Color(clrWhite);
       }
       else
       {
-         m_lblPairInfo[i].Text("");
-         m_lblPairInfo[i].Hide();
-         m_btnClose[i].Hide();
+         m_lblPairInfo[i].Text(" ");
+         m_btnClose[i].Text(" ");
+         m_btnClose[i].ColorBackground(clrNONE);
+         m_btnClose[i].Color(clrNONE);
       }
    }
 
    // 总盈亏
    double total = g_manager.GetTotalProfit();
-   string totalStr = (total >= 0) ? "+$" + DoubleToString(total, 2) : "-$" + DoubleToString(MathAbs(total), 2);
-   m_lblTotalProfit.Text("总盈亏: " + totalStr);
-   m_lblTotalProfit.Color(total >= 0 ? clrGreen : clrRed);
-
-   if(count == 0)
+   if(count > 0)
+   {
+      string totalStr = (total >= 0) ? "+" + DoubleToString(total, 2) : DoubleToString(total, 2);
+      m_lblTotalProfit.Text("总盈亏: $" + totalStr);
+      m_lblTotalProfit.Color(total >= 0 ? clrGreen : clrRed);
+   }
+   else
+   {
       m_lblTotalProfit.Text("无持仓");
+      m_lblTotalProfit.Color(clrGray);
+   }
 
    m_displayCount = count;
+   ChartRedraw();
 }
 
 //+------------------------------------------------------------------+
