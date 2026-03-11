@@ -573,22 +573,19 @@ void CheckSpreadAutoOpen()
       return;
 
    double spread = g_spread.Current();
-   double avg    = g_spread.HistAvg();
    int    samples = g_spread.SampleCount();
 
    // 至少采样60次后才开始判断（避免启动初期误判）
    if(samples < 60)
       return;
 
-   double deviation = spread - avg;
-
    string errorMsg;
 
-   // 基差 > 均值 + 阈值: 基差偏高，做空基差（卖A买B）
-   if(deviation >= InpSpreadThreshold)
+   // 基差 >= 阈值: 基差偏高，做空基差（卖A买B，期待基差缩小）
+   if(spread >= InpSpreadThreshold)
    {
       Print("[SpreadAuto] 基差偏高触发: spread=", DoubleToString(spread, 2),
-            " avg=", DoubleToString(avg, 2), " dev=", DoubleToString(deviation, 2));
+            " >= 阈值=", DoubleToString(InpSpreadThreshold, 2));
 
       bool ok = g_manager.OpenPair(
          InpDefaultSymA, ORDER_TYPE_SELL, InpDefaultLotsA,
@@ -601,11 +598,11 @@ void CheckSpreadAutoOpen()
       else
          Print("[SpreadAuto] 开仓失败: ", errorMsg);
    }
-   // 基差 < 均值 - 阈值: 基差偏低，做多基差（买A卖B）
-   else if(deviation <= -InpSpreadThreshold)
+   // 基差 <= -阈值: 基差偏低（反向），做多基差（买A卖B）
+   else if(spread <= -InpSpreadThreshold)
    {
       Print("[SpreadAuto] 基差偏低触发: spread=", DoubleToString(spread, 2),
-            " avg=", DoubleToString(avg, 2), " dev=", DoubleToString(deviation, 2));
+            " <= -阈值=", DoubleToString(-InpSpreadThreshold, 2));
 
       bool ok = g_manager.OpenPair(
          InpDefaultSymA, ORDER_TYPE_BUY, InpDefaultLotsA,

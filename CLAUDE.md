@@ -67,7 +67,7 @@ struct PairPosition {
 - 持久化文件路径: `MQL5/Files/PairTrader_data.csv`
 - 历史记录文件: `MQL5/Files/PairTrader_history.csv`
 - 基差自动开仓需设置 InpSpreadAutoOpen=true 启用，默认关闭
-- 基差自动开仓逻辑：基差偏离历史均值 > 阈值时反向开仓（均值回归策略）
+- 基差自动开仓逻辑：基差绝对值 >= 阈值时开仓（基差>=阈值→卖A买B，基差<=-阈值→买A卖B）
 - 至少采样60次后才启动自动开仓判断，避免启动初期误判
 
 ## 开发环境
