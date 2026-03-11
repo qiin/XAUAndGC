@@ -44,6 +44,104 @@ struct PairHistory
 };
 
 //+------------------------------------------------------------------+
+//| 基差监控器                                                         |
+//+------------------------------------------------------------------+
+class CSpreadMonitor
+{
+private:
+   string            m_symbolA;
+   string            m_symbolB;
+   double            m_dayHigh;
+   double            m_dayLow;
+   double            m_current;
+   datetime          m_dayStart;       // 当日起始时间
+   double            m_sumSpread;      // 历史累计基差（用于计算均值）
+   int               m_sumCount;       // 历史采样次数
+   double            m_histAvg;        // 历史均值
+
+public:
+                     CSpreadMonitor();
+   void              Init(string symA, string symB);
+   void              Update();         // OnTimer中调用
+   double            Current()    { return m_current; }
+   double            DayHigh()    { return m_dayHigh; }
+   double            DayLow()     { return m_dayLow; }
+   double            HistAvg()    { return (m_sumCount > 0) ? m_sumSpread / m_sumCount : 0.0; }
+   int               SampleCount(){ return m_sumCount; }
+   string            SymbolA()    { return m_symbolA; }
+   string            SymbolB()    { return m_symbolB; }
+};
+
+//+------------------------------------------------------------------+
+//| CSpreadMonitor 构造函数                                            |
+//+------------------------------------------------------------------+
+CSpreadMonitor::CSpreadMonitor()
+{
+   m_dayHigh   = -DBL_MAX;
+   m_dayLow    = DBL_MAX;
+   m_current   = 0.0;
+   m_dayStart  = 0;
+   m_sumSpread = 0.0;
+   m_sumCount  = 0;
+   m_histAvg   = 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| 初始化基差监控                                                      |
+//+------------------------------------------------------------------+
+void CSpreadMonitor::Init(string symA, string symB)
+{
+   m_symbolA  = symA;
+   m_symbolB  = symB;
+   m_dayStart = 0;
+   m_dayHigh  = -DBL_MAX;
+   m_dayLow   = DBL_MAX;
+   m_current  = 0.0;
+   m_sumSpread = 0.0;
+   m_sumCount  = 0;
+
+   // 添加品种到市场报价
+   SymbolSelect(symA, true);
+   SymbolSelect(symB, true);
+}
+
+//+------------------------------------------------------------------+
+//| 更新基差（每次OnTimer调用）                                          |
+//+------------------------------------------------------------------+
+void CSpreadMonitor::Update()
+{
+   double bidA = SymbolInfoDouble(m_symbolA, SYMBOL_BID);
+   double bidB = SymbolInfoDouble(m_symbolB, SYMBOL_BID);
+
+   if(bidA <= 0 || bidB <= 0)
+      return;
+
+   m_current = bidA - bidB;
+
+   // 检查是否跨天，重置日内高低
+   MqlDateTime now;
+   TimeCurrent(now);
+   datetime today = StringToTime(IntegerToString(now.year) + "."
+                  + IntegerToString(now.mon) + "."
+                  + IntegerToString(now.day));
+
+   if(today != m_dayStart)
+   {
+      m_dayStart = today;
+      m_dayHigh  = m_current;
+      m_dayLow   = m_current;
+      Print("[SpreadMonitor] 新交易日，基差重置. 当前基差=", DoubleToString(m_current, 2));
+   }
+
+   if(m_current > m_dayHigh) m_dayHigh = m_current;
+   if(m_current < m_dayLow)  m_dayLow  = m_current;
+
+   // 累计采样（用于历史均值）
+   m_sumSpread += m_current;
+   m_sumCount++;
+}
+
+//+------------------------------------------------------------------+
 //| 配对交易管理器                                                     |
 //+------------------------------------------------------------------+
 class CPairTradeManager

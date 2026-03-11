@@ -22,16 +22,21 @@ input double   InpStopLoss     = 300.0;   // 止损金额(USD)
 input double   InpTPBuffer     = 5.0;     // 止盈提前触发量(USD)
 input int      InpMagicNumber  = 20240101; // Magic Number
 input int      InpTimerMs      = 500;      // 监控间隔(毫秒)
-input string   InpDefaultSymA  = "XAUUSD"; // 默认品种A
-input string   InpDefaultSymB  = "GC";     // 默认品种B
-input double   InpDefaultLotsA = 0.1;      // 默认手数A
-input double   InpDefaultLotsB = 0.1;      // 默认手数B
+input string   InpDefaultSymA  = "XAUUSD"; // 品种A
+input string   InpDefaultSymB  = "GC";     // 品种B
+input double   InpDefaultLotsA = 0.1;      // 手数A
+input double   InpDefaultLotsB = 0.1;      // 手数B
+
+//--- 基差自动开仓参数
+input bool     InpSpreadAutoOpen   = false;  // 启用基差自动开仓
+input double   InpSpreadThreshold  = 5.0;    // 基差开仓阈值(绝对值)
+input int      InpSpreadMaxPairs   = 3;      // 基差开仓最大同时持仓对数
 
 //+------------------------------------------------------------------+
 //| 面板尺寸常量                                                       |
 //+------------------------------------------------------------------+
 #define PANEL_WIDTH    420
-#define PANEL_HEIGHT   650
+#define PANEL_HEIGHT   750
 #define ROW_HEIGHT     25
 #define LABEL_X        10
 #define INPUT_X        100
@@ -44,23 +49,29 @@ input double   InpDefaultLotsB = 0.1;      // 默认手数B
 class CPairTraderPanel : public CAppDialog
 {
 private:
-   // 品种A控件
+   // 品种参数显示（只读）
    CLabel            m_lblSymA;
-   CEdit             m_edtSymA;
-   CComboBox         m_cmbDirA;
-   CEdit             m_edtLotsA;
+   CLabel            m_lblSymAVal;
+   CLabel            m_lblDirAVal;
+   CLabel            m_lblLotsAVal;
 
-   // 品种B控件
    CLabel            m_lblSymB;
-   CEdit             m_edtSymB;
-   CComboBox         m_cmbDirB;
-   CEdit             m_edtLotsB;
+   CLabel            m_lblSymBVal;
+   CLabel            m_lblDirBVal;
+   CLabel            m_lblLotsBVal;
 
    // 止盈止损显示
    CLabel            m_lblTP;
    CLabel            m_lblTPVal;
    CLabel            m_lblSL;
    CLabel            m_lblSLVal;
+
+   // 基差监控区域
+   CLabel            m_lblSpreadHeader;
+   CLabel            m_lblSpreadCurrent;
+   CLabel            m_lblSpreadDayHL;
+   CLabel            m_lblSpreadAvg;
+   CLabel            m_lblSpreadAuto;
 
    // 按钮
    CButton           m_btnOpen;
@@ -86,14 +97,6 @@ public:
    void              UpdateDisplay();
    void              SetStatus(string msg);
 
-   // 获取面板输入值
-   string            GetSymbolA()   { return m_edtSymA.Text(); }
-   string            GetSymbolB()   { return m_edtSymB.Text(); }
-   double            GetLotsA()     { return StringToDouble(m_edtLotsA.Text()); }
-   double            GetLotsB()     { return StringToDouble(m_edtLotsB.Text()); }
-   ENUM_ORDER_TYPE   GetDirA()      { return (m_cmbDirA.Value() == 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; }
-   ENUM_ORDER_TYPE   GetDirB()      { return (m_cmbDirB.Value() == 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; }
-
    // 事件映射
    virtual bool      OnEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
 };
@@ -103,6 +106,7 @@ public:
 //+------------------------------------------------------------------+
 CPairTradeManager  g_manager;
 CPairTraderPanel   g_panel;
+CSpreadMonitor     g_spread;
 
 //+------------------------------------------------------------------+
 //| 事件处理映射                                                       |
@@ -128,9 +132,10 @@ EVENT_MAP_END(CAppDialog)
 void OnClickOpen(void)
 {
    string errorMsg;
+   // 使用 Input 参数值（品种A买/品种B卖 固定方向）
    bool result = g_manager.OpenPair(
-      g_panel.GetSymbolA(), g_panel.GetDirA(), g_panel.GetLotsA(),
-      g_panel.GetSymbolB(), g_panel.GetDirB(), g_panel.GetLotsB(),
+      InpDefaultSymA, ORDER_TYPE_BUY, InpDefaultLotsA,
+      InpDefaultSymB, ORDER_TYPE_SELL, InpDefaultLotsB,
       errorMsg
    );
 
@@ -190,45 +195,45 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    int row = 10;
 
-   // === 品种A行 ===
+   // === 品种A行（只读显示） ===
    m_lblSymA.Create(m_chart_id, "lblSymA", m_subwin, LABEL_X, row, LABEL_X + 80, row + ROW_HEIGHT);
    m_lblSymA.Text("品种A:");
    Add(m_lblSymA);
 
-   m_edtSymA.Create(m_chart_id, "edtSymA", m_subwin, INPUT_X, row, INPUT_X + INPUT_WIDTH, row + ROW_HEIGHT);
-   m_edtSymA.Text(InpDefaultSymA);
-   Add(m_edtSymA);
+   m_lblSymAVal.Create(m_chart_id, "lblSymAVal", m_subwin, INPUT_X, row, INPUT_X + INPUT_WIDTH, row + ROW_HEIGHT);
+   m_lblSymAVal.Text(InpDefaultSymA);
+   m_lblSymAVal.Color(clrDodgerBlue);
+   Add(m_lblSymAVal);
 
-   m_cmbDirA.Create(m_chart_id, "cmbDirA", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
-   m_cmbDirA.ItemAdd("Buy", 0);
-   m_cmbDirA.ItemAdd("Sell", 1);
-   m_cmbDirA.SelectByValue(0);
-   Add(m_cmbDirA);
+   m_lblDirAVal.Create(m_chart_id, "lblDirAVal", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
+   m_lblDirAVal.Text("Buy");
+   m_lblDirAVal.Color(clrGreen);
+   Add(m_lblDirAVal);
 
-   m_edtLotsA.Create(m_chart_id, "edtLotsA", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
-   m_edtLotsA.Text(DoubleToString(InpDefaultLotsA, 2));
-   Add(m_edtLotsA);
+   m_lblLotsAVal.Create(m_chart_id, "lblLotsAVal", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
+   m_lblLotsAVal.Text(DoubleToString(InpDefaultLotsA, 2));
+   Add(m_lblLotsAVal);
 
    row += ROW_HEIGHT + 5;
 
-   // === 品种B行 ===
+   // === 品种B行（只读显示） ===
    m_lblSymB.Create(m_chart_id, "lblSymB", m_subwin, LABEL_X, row, LABEL_X + 80, row + ROW_HEIGHT);
    m_lblSymB.Text("品种B:");
    Add(m_lblSymB);
 
-   m_edtSymB.Create(m_chart_id, "edtSymB", m_subwin, INPUT_X, row, INPUT_X + INPUT_WIDTH, row + ROW_HEIGHT);
-   m_edtSymB.Text(InpDefaultSymB);
-   Add(m_edtSymB);
+   m_lblSymBVal.Create(m_chart_id, "lblSymBVal", m_subwin, INPUT_X, row, INPUT_X + INPUT_WIDTH, row + ROW_HEIGHT);
+   m_lblSymBVal.Text(InpDefaultSymB);
+   m_lblSymBVal.Color(clrDodgerBlue);
+   Add(m_lblSymBVal);
 
-   m_cmbDirB.Create(m_chart_id, "cmbDirB", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
-   m_cmbDirB.ItemAdd("Buy", 0);
-   m_cmbDirB.ItemAdd("Sell", 1);
-   m_cmbDirB.SelectByValue(1);
-   Add(m_cmbDirB);
+   m_lblDirBVal.Create(m_chart_id, "lblDirBVal", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
+   m_lblDirBVal.Text("Sell");
+   m_lblDirBVal.Color(clrRed);
+   Add(m_lblDirBVal);
 
-   m_edtLotsB.Create(m_chart_id, "edtLotsB", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
-   m_edtLotsB.Text(DoubleToString(InpDefaultLotsB, 2));
-   Add(m_edtLotsB);
+   m_lblLotsBVal.Create(m_chart_id, "lblLotsBVal", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
+   m_lblLotsBVal.Text(DoubleToString(InpDefaultLotsB, 2));
+   Add(m_lblLotsBVal);
 
    row += ROW_HEIGHT + 10;
 
@@ -251,6 +256,42 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    row += ROW_HEIGHT + 10;
 
+   // === 基差监控区域 ===
+   m_lblSpreadHeader.Create(m_chart_id, "lblSpreadHdr", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   m_lblSpreadHeader.Text("─── 基差监控 (" + InpDefaultSymA + " - " + InpDefaultSymB + ") ───");
+   Add(m_lblSpreadHeader);
+
+   row += ROW_HEIGHT + 3;
+
+   m_lblSpreadCurrent.Create(m_chart_id, "lblSpreadCur", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   m_lblSpreadCurrent.Text("实时基差: --");
+   m_lblSpreadCurrent.Color(clrWhite);
+   Add(m_lblSpreadCurrent);
+
+   row += ROW_HEIGHT + 2;
+
+   m_lblSpreadDayHL.Create(m_chart_id, "lblSpreadHL", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   m_lblSpreadDayHL.Text("今日: 高 -- / 低 --");
+   Add(m_lblSpreadDayHL);
+
+   row += ROW_HEIGHT + 2;
+
+   m_lblSpreadAvg.Create(m_chart_id, "lblSpreadAvg", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   m_lblSpreadAvg.Text("均值: -- (采样: 0)");
+   Add(m_lblSpreadAvg);
+
+   row += ROW_HEIGHT + 2;
+
+   m_lblSpreadAuto.Create(m_chart_id, "lblSpreadAuto", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
+   if(InpSpreadAutoOpen)
+      m_lblSpreadAuto.Text("自动开仓: ON  阈值=" + DoubleToString(InpSpreadThreshold, 2) + "  上限=" + IntegerToString(InpSpreadMaxPairs) + "对");
+   else
+      m_lblSpreadAuto.Text("自动开仓: OFF");
+   m_lblSpreadAuto.Color(InpSpreadAutoOpen ? clrLimeGreen : clrGray);
+   Add(m_lblSpreadAuto);
+
+   row += ROW_HEIGHT + 10;
+
    // === 开仓按钮 ===
    m_btnOpen.Create(m_chart_id, "btnOpen", m_subwin, LABEL_X, row, PANEL_WIDTH - 30, row + 35);
    m_btnOpen.Text("一键开仓");
@@ -269,27 +310,21 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    // === 持仓对信息 (最多10对) ===
    m_displayCount = 0;
-   Print("[CreatePanel] Pair controls start at row=", row, " chart_id=", m_chart_id, " subwin=", m_subwin);
    for(int i = 0; i < 10; i++)
    {
       string idxStr = IntegerToString(i);
 
-      bool lblOk = m_lblPairInfo[i].Create(m_chart_id, "lblPair" + idxStr, m_subwin,
+      m_lblPairInfo[i].Create(m_chart_id, "lblPair" + idxStr, m_subwin,
                               LABEL_X, row, PANEL_WIDTH - 80, row + ROW_HEIGHT);
       m_lblPairInfo[i].Text(" ");
       Add(m_lblPairInfo[i]);
 
-      bool btnOk = m_btnClose[i].Create(m_chart_id, "btnClose" + idxStr, m_subwin,
+      m_btnClose[i].Create(m_chart_id, "btnClose" + idxStr, m_subwin,
                            PANEL_WIDTH - 75, row, PANEL_WIDTH - 30, row + ROW_HEIGHT);
       m_btnClose[i].Text(" ");
       m_btnClose[i].ColorBackground(clrNONE);
       m_btnClose[i].Color(clrNONE);
       Add(m_btnClose[i]);
-
-      if(i == 0)
-         Print("[CreatePanel] Pair[0] lblOk=", lblOk, " btnOk=", btnOk,
-               " lblName=", m_lblPairInfo[i].Name(), " btnName=", m_btnClose[i].Name(),
-               " row=", row);
 
       row += ROW_HEIGHT + 2;
    }
@@ -354,9 +389,29 @@ void CPairTraderPanel::UpdateDisplay()
    if(doLog)
    {
       lastLog = TimeCurrent();
-      Print("[UpdateDisplay] PairCount=", count, " m_chart_id=", m_chart_id, " m_subwin=", m_subwin);
+      Print("[UpdateDisplay] PairCount=", count);
    }
 
+   // 基差监控区域更新
+   double spread = g_spread.Current();
+   double dayH   = g_spread.DayHigh();
+   double dayL   = g_spread.DayLow();
+   double avg    = g_spread.HistAvg();
+   int    samples = g_spread.SampleCount();
+
+   if(samples > 0)
+   {
+      m_lblSpreadCurrent.Text("实时基差: " + DoubleToString(spread, 2));
+      m_lblSpreadCurrent.Color(spread >= 0 ? clrLimeGreen : clrOrangeRed);
+
+      m_lblSpreadDayHL.Text("今日: 高 " + DoubleToString(dayH, 2)
+                          + " / 低 " + DoubleToString(dayL, 2)
+                          + " / 幅 " + DoubleToString(dayH - dayL, 2));
+
+      m_lblSpreadAvg.Text("均值: " + DoubleToString(avg, 2) + " (采样: " + IntegerToString(samples) + ")");
+   }
+
+   // 持仓列表
    for(int i = 0; i < 10; i++)
    {
       if(i < count)
@@ -374,22 +429,6 @@ void CPairTraderPanel::UpdateDisplay()
                      + " / "
                      + pair.symbolB + " " + dirStrB + " " + DoubleToString(pair.lotsB, 2)
                      + "  $" + profitStr;
-
-         if(doLog)
-         {
-            Print("[UpdateDisplay] Pair[", i, "] info=", info);
-            // 检查控件对象名称和位置
-            long lblX = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_XDISTANCE);
-            long lblY = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_YDISTANCE);
-            long lblVis = ObjectGetInteger(m_chart_id, m_lblPairInfo[i].Name(), OBJPROP_TIMEFRAMES);
-            Print("[UpdateDisplay] Label name=", m_lblPairInfo[i].Name(),
-                  " x=", lblX, " y=", lblY, " visible_flags=", lblVis);
-            long btnX = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_XDISTANCE);
-            long btnY = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_YDISTANCE);
-            long btnVis = ObjectGetInteger(m_chart_id, m_btnClose[i].Name(), OBJPROP_TIMEFRAMES);
-            Print("[UpdateDisplay] Button name=", m_btnClose[i].Name(),
-                  " x=", btnX, " y=", btnY, " visible_flags=", btnVis);
-         }
 
          m_lblPairInfo[i].Text(info);
          m_lblPairInfo[i].Color(profit >= 0 ? clrGreen : clrRed);
@@ -425,7 +464,6 @@ void CPairTraderPanel::UpdateDisplay()
    int histCount = g_manager.HistoryCount();
    for(int h = 0; h < 5; h++)
    {
-      // 从最新到最旧: histCount-1, histCount-2, ...
       int histIdx = histCount - 1 - h;
       if(histIdx >= 0)
       {
@@ -456,14 +494,6 @@ void CPairTraderPanel::UpdateDisplay()
       }
    }
 
-   if(doLog)
-   {
-      Print("[UpdateDisplay] TotalProfit=", total, " displayCount=", count, " histCount=", histCount);
-      // 列出面板内所有图表对象，检查有多少
-      int totalObjs = ObjectsTotal(m_chart_id, m_subwin);
-      Print("[UpdateDisplay] Chart objects in subwin ", m_subwin, ": ", totalObjs);
-   }
-
    m_displayCount = count;
    ChartRedraw();
 }
@@ -484,6 +514,9 @@ int OnInit()
    // 初始化交易管理器
    g_manager.Init(InpMagicNumber);
 
+   // 初始化基差监控
+   g_spread.Init(InpDefaultSymA, InpDefaultSymB);
+
    // 创建面板
    if(!g_panel.CreatePanel(0, "PairTrader", 0, 20, 20))
    {
@@ -499,7 +532,9 @@ int OnInit()
    // 启动毫秒级定时器
    EventSetMillisecondTimer(InpTimerMs);
 
-   Print("PairTrader EA 初始化完成. TP=", InpTakeProfit, " SL=", InpStopLoss, " Timer=", InpTimerMs, "ms");
+   Print("PairTrader EA 初始化完成. TP=", InpTakeProfit, " SL=", InpStopLoss,
+         " Timer=", InpTimerMs, "ms SpreadAuto=", InpSpreadAutoOpen,
+         " SpreadThreshold=", InpSpreadThreshold);
    return INIT_SUCCEEDED;
 }
 
@@ -514,15 +549,81 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-//| 定时器事件：盈亏监控                                                |
+//| 基差自动开仓逻辑                                                   |
+//+------------------------------------------------------------------+
+void CheckSpreadAutoOpen()
+{
+   if(!InpSpreadAutoOpen)
+      return;
+
+   // 达到最大持仓对数则不开
+   if(g_manager.PairCount() >= InpSpreadMaxPairs)
+      return;
+
+   double spread = g_spread.Current();
+   double avg    = g_spread.HistAvg();
+   int    samples = g_spread.SampleCount();
+
+   // 至少采样60次后才开始判断（避免启动初期误判）
+   if(samples < 60)
+      return;
+
+   double deviation = spread - avg;
+
+   string errorMsg;
+
+   // 基差 > 均值 + 阈值: 基差偏高，做空基差（卖A买B）
+   if(deviation >= InpSpreadThreshold)
+   {
+      Print("[SpreadAuto] 基差偏高触发: spread=", DoubleToString(spread, 2),
+            " avg=", DoubleToString(avg, 2), " dev=", DoubleToString(deviation, 2));
+
+      bool ok = g_manager.OpenPair(
+         InpDefaultSymA, ORDER_TYPE_SELL, InpDefaultLotsA,
+         InpDefaultSymB, ORDER_TYPE_BUY, InpDefaultLotsB,
+         errorMsg
+      );
+
+      if(ok)
+         g_panel.SetStatus("基差自动开仓(卖A买B)");
+      else
+         Print("[SpreadAuto] 开仓失败: ", errorMsg);
+   }
+   // 基差 < 均值 - 阈值: 基差偏低，做多基差（买A卖B）
+   else if(deviation <= -InpSpreadThreshold)
+   {
+      Print("[SpreadAuto] 基差偏低触发: spread=", DoubleToString(spread, 2),
+            " avg=", DoubleToString(avg, 2), " dev=", DoubleToString(deviation, 2));
+
+      bool ok = g_manager.OpenPair(
+         InpDefaultSymA, ORDER_TYPE_BUY, InpDefaultLotsA,
+         InpDefaultSymB, ORDER_TYPE_SELL, InpDefaultLotsB,
+         errorMsg
+      );
+
+      if(ok)
+         g_panel.SetStatus("基差自动开仓(买A卖B)");
+      else
+         Print("[SpreadAuto] 开仓失败: ", errorMsg);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 定时器事件：盈亏监控 + 基差监控                                      |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   // 更新基差
+   g_spread.Update();
+
    // 监控盈亏，自动平仓
    int closed = g_manager.MonitorPairs(InpTakeProfit, InpStopLoss, InpTPBuffer);
 
    if(closed > 0)
       g_panel.SetStatus(IntegerToString(closed) + " 对触发自动平仓");
+
+   // 基差自动开仓检查
+   CheckSpreadAutoOpen();
 
    // 刷新面板
    g_panel.UpdateDisplay();
