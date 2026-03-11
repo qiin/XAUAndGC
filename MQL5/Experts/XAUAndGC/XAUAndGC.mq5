@@ -49,16 +49,17 @@ input int      InpSpreadMaxPairs   = 3;      // 基差开仓最大同时持仓�
 class CPairTraderPanel : public CAppDialog
 {
 private:
-   // 品种参数显示（只读）
+   // 品种名（只读）
    CLabel            m_lblSymA;
    CLabel            m_lblSymAVal;
-   CLabel            m_lblDirAVal;
-   CLabel            m_lblLotsAVal;
+   // 方向和手数（可编辑）
+   CComboBox         m_cmbDirA;
+   CEdit             m_edtLotsA;
 
    CLabel            m_lblSymB;
    CLabel            m_lblSymBVal;
-   CLabel            m_lblDirBVal;
-   CLabel            m_lblLotsBVal;
+   CComboBox         m_cmbDirB;
+   CEdit             m_edtLotsB;
 
    // 止盈止损显示
    CLabel            m_lblTP;
@@ -97,6 +98,12 @@ public:
    void              UpdateDisplay();
    void              SetStatus(string msg);
 
+   // 获取面板可编辑值
+   double            GetLotsA()     { return StringToDouble(m_edtLotsA.Text()); }
+   double            GetLotsB()     { return StringToDouble(m_edtLotsB.Text()); }
+   ENUM_ORDER_TYPE   GetDirA()      { return (m_cmbDirA.Value() == 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; }
+   ENUM_ORDER_TYPE   GetDirB()      { return (m_cmbDirB.Value() == 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; }
+
    // 事件映射
    virtual bool      OnEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
 };
@@ -132,10 +139,10 @@ EVENT_MAP_END(CAppDialog)
 void OnClickOpen(void)
 {
    string errorMsg;
-   // 使用 Input 参数值（品种A买/品种B卖 固定方向）
+   // 品种由Input参数决定（只读），方向和手数从面板读取
    bool result = g_manager.OpenPair(
-      InpDefaultSymA, ORDER_TYPE_BUY, InpDefaultLotsA,
-      InpDefaultSymB, ORDER_TYPE_SELL, InpDefaultLotsB,
+      InpDefaultSymA, g_panel.GetDirA(), g_panel.GetLotsA(),
+      InpDefaultSymB, g_panel.GetDirB(), g_panel.GetLotsB(),
       errorMsg
    );
 
@@ -195,7 +202,7 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
 
    int row = 10;
 
-   // === 品种A行（只读显示） ===
+   // === 品种A行：品种只读，方向和手数可编辑 ===
    m_lblSymA.Create(m_chart_id, "lblSymA", m_subwin, LABEL_X, row, LABEL_X + 80, row + ROW_HEIGHT);
    m_lblSymA.Text("品种A:");
    Add(m_lblSymA);
@@ -205,18 +212,19 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
    m_lblSymAVal.Color(clrDodgerBlue);
    Add(m_lblSymAVal);
 
-   m_lblDirAVal.Create(m_chart_id, "lblDirAVal", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
-   m_lblDirAVal.Text("Buy");
-   m_lblDirAVal.Color(clrGreen);
-   Add(m_lblDirAVal);
+   m_cmbDirA.Create(m_chart_id, "cmbDirA", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
+   m_cmbDirA.ItemAdd("Buy", 0);
+   m_cmbDirA.ItemAdd("Sell", 1);
+   m_cmbDirA.SelectByValue(0);
+   Add(m_cmbDirA);
 
-   m_lblLotsAVal.Create(m_chart_id, "lblLotsAVal", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
-   m_lblLotsAVal.Text(DoubleToString(InpDefaultLotsA, 2));
-   Add(m_lblLotsAVal);
+   m_edtLotsA.Create(m_chart_id, "edtLotsA", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
+   m_edtLotsA.Text(DoubleToString(InpDefaultLotsA, 2));
+   Add(m_edtLotsA);
 
    row += ROW_HEIGHT + 5;
 
-   // === 品种B行（只读显示） ===
+   // === 品种B行：品种只读，方向和手数可编辑 ===
    m_lblSymB.Create(m_chart_id, "lblSymB", m_subwin, LABEL_X, row, LABEL_X + 80, row + ROW_HEIGHT);
    m_lblSymB.Text("品种B:");
    Add(m_lblSymB);
@@ -226,14 +234,15 @@ bool CPairTraderPanel::CreatePanel(long chart, string name, int subwin, int x, i
    m_lblSymBVal.Color(clrDodgerBlue);
    Add(m_lblSymBVal);
 
-   m_lblDirBVal.Create(m_chart_id, "lblDirBVal", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
-   m_lblDirBVal.Text("Sell");
-   m_lblDirBVal.Color(clrRed);
-   Add(m_lblDirBVal);
+   m_cmbDirB.Create(m_chart_id, "cmbDirB", m_subwin, INPUT_X + INPUT_WIDTH + 5, row, INPUT_X + INPUT_WIDTH + 75, row + ROW_HEIGHT);
+   m_cmbDirB.ItemAdd("Buy", 0);
+   m_cmbDirB.ItemAdd("Sell", 1);
+   m_cmbDirB.SelectByValue(1);
+   Add(m_cmbDirB);
 
-   m_lblLotsBVal.Create(m_chart_id, "lblLotsBVal", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
-   m_lblLotsBVal.Text(DoubleToString(InpDefaultLotsB, 2));
-   Add(m_lblLotsBVal);
+   m_edtLotsB.Create(m_chart_id, "edtLotsB", m_subwin, INPUT_X + INPUT_WIDTH + 80, row, INPUT_X + INPUT_WIDTH + 145, row + ROW_HEIGHT);
+   m_edtLotsB.Text(DoubleToString(InpDefaultLotsB, 2));
+   Add(m_edtLotsB);
 
    row += ROW_HEIGHT + 10;
 
@@ -526,6 +535,9 @@ int OnInit()
 
    g_panel.Run();
 
+   // 禁止图表前景模式，防止K线绘制遮挡面板
+   ChartSetInteger(0, CHART_FOREGROUND, false);
+
    Print("[OnInit] Panel created. PairCount after Init=", g_manager.PairCount());
    g_panel.UpdateDisplay();
 
@@ -637,6 +649,13 @@ void OnChartEvent(const int id,
                   const double &dparam,
                   const string &sparam)
 {
+   // 图表属性变化（新K线/缩放/滚动）时，确保面板前景显示
+   if(id == CHARTEVENT_CHART_CHANGE)
+   {
+      // 禁止图表前景显示，避免遮挡面板控件
+      ChartSetInteger(0, CHART_FOREGROUND, false);
+   }
+
    g_panel.ChartEvent(id, lparam, dparam, sparam);
 }
 
