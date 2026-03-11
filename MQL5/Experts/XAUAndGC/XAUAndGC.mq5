@@ -18,6 +18,10 @@
 //+------------------------------------------------------------------+
 //| Input 参数                                                        |
 //+------------------------------------------------------------------+
+//--- License 认证（放最前面，用户必须先填Key）
+input string   InpLicenseKey      = "";                         // License Key
+
+//--- 交易参数
 input double   InpTakeProfit    = 500.0;   // 止盈金额(USD)
 input double   InpStopLoss     = 300.0;   // 止损金额(USD)
 input double   InpTPBuffer     = 5.0;     // 止盈提前触发量(USD)
@@ -32,11 +36,6 @@ input double   InpDefaultLotsB = 0.1;      // 手数B
 input bool     InpSpreadAutoOpen   = false;  // 启用基差自动开仓
 input double   InpSpreadThreshold  = 5.0;    // 基差开仓阈值(绝对值)
 input int      InpSpreadMaxPairs   = 3;      // 基差开仓最大同时持仓对数
-
-//--- License 认证参数
-input string   InpAuthServer      = "https://auth.1pay.dev";  // 认证服务器地址
-input string   InpLicenseKey      = "";                         // License Key
-input int      InpHeartbeatMin    = 5;                          // 心跳间隔(分钟)
 
 //+------------------------------------------------------------------+
 //| 面板尺寸常量                                                       |
@@ -534,14 +533,13 @@ void CPairTraderPanel::SetStatus(string msg)
 int OnInit()
 {
    // === License 验证（最先执行） ===
-   g_license.Init(InpAuthServer, InpLicenseKey, InpHeartbeatMin);
+   g_license.Init("https://auth.1pay.dev", InpLicenseKey, 5);
 
    if(!g_license.Authenticate())
    {
       Print("[License] 验证失败，EA 将在 10 秒后自动移除");
       Comment("License 验证失败: " + g_license.GetStatus()
-            + "\n请检查 License Key 是否正确"
-            + "\n服务器: " + InpAuthServer);
+            + "\n请检查 License Key 是否正确");
       EventSetTimer(10); // 延迟移除，给用户看错误信息
       return INIT_SUCCEEDED;
    }
