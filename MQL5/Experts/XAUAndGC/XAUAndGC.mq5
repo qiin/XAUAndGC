@@ -13,6 +13,7 @@
 #include <Controls\Label.mqh>
 #include <Controls\ComboBox.mqh>
 #include <XAUAndGC\PairTradeManager.mqh>
+#include <XAUAndGC\LicenseManager.mqh>
 
 //+------------------------------------------------------------------+
 //| Input 参数                                                        |
@@ -31,6 +32,11 @@ input double   InpDefaultLotsB = 0.1;      // 手数B
 input bool     InpSpreadAutoOpen   = false;  // 启用基差自动开仓
 input double   InpSpreadThreshold  = 5.0;    // 基差开仓阈值(绝对值)
 input int      InpSpreadMaxPairs   = 3;      // 基差开仓最大同时持仓对数
+
+//--- License 认证参数
+input string   InpAuthServer      = "https://auth.1pay.dev";  // 认证服务器地址
+input string   InpLicenseKey      = "";                         // License Key
+input int      InpHeartbeatMin    = 5;                          // 心跳间隔(分钟)
 
 //+------------------------------------------------------------------+
 //| 面板尺寸常量                                                       |
@@ -114,6 +120,7 @@ public:
 CPairTradeManager  g_manager;
 CPairTraderPanel   g_panel;
 CSpreadMonitor     g_spread;
+CLicenseManager    g_license;
 
 //+------------------------------------------------------------------+
 //| 事件处理映射                                                       |
@@ -138,6 +145,12 @@ EVENT_MAP_END(CAppDialog)
 //+------------------------------------------------------------------+
 void OnClickOpen(void)
 {
+   if(!g_license.IsAuthorized())
+   {
+      g_panel.SetStatus("License未验证，无法开仓");
+      return;
+   }
+
    string errorMsg;
    // 品种由Input参数决定（只读），方向和手数从面板读取
    bool result = g_manager.OpenPair(
@@ -520,7 +533,20 @@ void CPairTraderPanel::SetStatus(string msg)
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   // 初始化交易管理器
+   // === License 验证（最先执行） ===
+   g_license.Init(InpAuthServer, InpLicenseKey, InpHeartbeatMin);
+
+   if(!g_license.Authenticate())
+   {
+      Print("[License] 验证失败，EA 将在 10 秒后自动移除");
+      Comment("License 验证失败: " + g_license.GetStatus()
+            + "\n请检查 License Key 是否正确"
+            + "\n服务器: " + InpAuthServer);
+      EventSetTimer(10); // 延迟移除，给用户看错误信息
+      return INIT_SUCCEEDED;
+   }
+
+   // === 初始化交易管理器 ===
    g_manager.Init(InpMagicNumber);
 
    // 初始化基差监控
@@ -546,7 +572,8 @@ int OnInit()
 
    Print("PairTrader EA 初始化完成. TP=", InpTakeProfit, " SL=", InpStopLoss,
          " Timer=", InpTimerMs, "ms SpreadAuto=", InpSpreadAutoOpen,
-         " SpreadThreshold=", InpSpreadThreshold);
+         " SpreadThreshold=", InpSpreadThreshold,
+         " License=", g_license.GetStatus());
    return INIT_SUCCEEDED;
 }
 
@@ -622,6 +649,26 @@ void CheckSpreadAutoOpen()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   // === License 未通过 → 延迟移除 ===
+   if(!g_license.IsAuthorized())
+   {
+      ExpertRemove();
+      return;
+   }
+
+   // === License 心跳（内部自动控制频率） ===
+   if(!g_license.Heartbeat())
+   {
+      // License 失效，平掉所有持仓后停止
+      Print("[License] License 已失效，正在平仓并停止...");
+      g_manager.CloseAllPairs();
+      g_panel.SetStatus("License失效: " + g_license.GetStatus());
+      g_panel.UpdateDisplay();
+      ExpertRemove();
+      return;
+   }
+
+   // === 正常业务逻辑 ===
    // 更新基差
    g_spread.Update();
 

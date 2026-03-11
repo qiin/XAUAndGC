@@ -9,6 +9,7 @@ MT5 Expert Advisor，支持两个品种同时开仓（一多一空）组成配�
 ```
 MQL5/Experts/XAUAndGC/XAUAndGC.mq5          # EA 主程序（入口 + 面板 + 事件处理）
 MQL5/Include/XAUAndGC/PairTradeManager.mqh   # 配对管理（数据结构、交易执行、监控、持久化）
+MQL5/Include/XAUAndGC/LicenseManager.mqh     # License 认证（启动验证 + 心跳 + 失效处理）
 ```
 
 ## 功能清单
@@ -28,6 +29,7 @@ MQL5/Include/XAUAndGC/PairTradeManager.mqh   # 配对管理（数据结构、交
 - [x] 历史交易记录：平仓后记录实际盈亏，面板显示最近5条，持久化到CSV
 - [x] 基差监控：实时基差(A-B)、今日最高/最低/振幅、历史均值
 - [x] 基差自动开仓：基差偏离均值超过阈值时自动开仓（Input参数控制开关/阈值/最大对数）
+- [x] License认证：启动验证 + 定时心跳 + 服务器拒绝3次/网络断6次自动停止
 
 ## 设计要点
 
@@ -69,6 +71,8 @@ struct PairPosition {
 - 基差自动开仓需设置 InpSpreadAutoOpen=true 启用，默认关闭
 - 基差自动开仓逻辑：基差绝对值 >= 阈值时开仓（基差>=阈值→卖A买B，基差<=-阈值→买A卖B）
 - 至少采样60次后才启动自动开仓判断，避免启动初期误判
+- License验证：需在MT5「工具→选项→EA交易」中添加认证服务器URL
+- License失效时自动平仓所有持仓并移除EA
 
 ## 开发环境
 
